@@ -1,0 +1,58 @@
+name: Release CLX Unreal Plugin
+
+# Source-only Unreal plugin: no engine build is needed — consumers drop it in
+# their project's Plugins/ folder and the editor compiles it. On a version tag
+# we package the plugin source into a zip and publish it to the
+# clockworks-downloads bucket (both a versioned object and a stable "-latest"
+# object the Clockworks Hub download button points at), and attach it to the
+# GitHub release.
+
+'on':
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package plugin source
+        run: |
+          set -eux
+          # Lay the plugin out under CLX/ so the zip extracts straight into a
+          # project's Plugins/ directory. Ship source only — no build outputs.
+          mkdir -p pkg/CLX
+          cp -R CLX.uplugin Source Resources Content pkg/CLX/ 2>/dev/null || true
+          # Drop any local build artifacts that may have been committed.
+          rm -rf pkg/CLX/Binaries pkg/CLX/Intermediate
+          ( cd pkg && zip -r ../clx-ue.zip CLX )
+          ls -l clx-ue.zip
+
+      - name: Upload versioned build to B2
+        uses: yamatt/backblaze-b2-upload-action@v7
+        with:
+          key_id: ${{ secrets.B2_KEY_ID }}
+          application_key: ${{ secrets.B2_APPLICATION_KEY }}
+          bucket_name: ${{ secrets.B2_BUCKET_NAME }}
+          file_path: clx-ue.zip
+          remote_path: plugins/clx-ue-${{ github.ref_name }}.zip
+
+      - name: Upload latest build to B2
+        uses: yamatt/backblaze-b2-upload-action@v7
+        with:
+          key_id: ${{ secrets.B2_KEY_ID }}
+          application_key: ${{ secrets.B2_APPLICATION_KEY }}
+          bucket_name: ${{ secrets.B2_BUCKET_NAME }}
+          file_path: clx-ue.zip
+          remote_path: plugins/clx-ue-latest.zip
+
+      - name: Attach to GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: clx-ue.zip
