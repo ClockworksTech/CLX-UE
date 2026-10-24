@@ -15,12 +15,13 @@ name: Release CLX Unreal Plugin
 # Linux images, and Unreal can't build Win64 or Mac binaries from Linux, so
 # those builds need a self-hosted runner with the engines installed from the
 # Epic Games Launcher: building against the stock Launcher engine is what lets
-# a Blueprint-only project load the plugin without compiling it. Win64 is on
-# by default; Mac is opt-in. Repo variables (Settings → Secrets and variables
+# a Blueprint-only project load the plugin without compiling it. Both are
+# opt-in; until a runner is set up, Win64 zips are built by hand with
+# scripts/build-win64.ps1 and uploaded next to these. Repo variables (Settings → Secrets and variables
 # → Actions → Variables) pick the versions without editing this file; see
 # "Releasing" in README.md. A JSON array of [] turns a platform off.
 #   UE_LINUX_VERSIONS  JSON array of image versions, default ["5.6","5.7","5.8"]
-#   UE_WIN64_VERSIONS  JSON array, default ["5.6"]
+#   UE_WIN64_VERSIONS  JSON array; Win64 builds are skipped while unset
 #   UE_WIN64_RUNNER    JSON array of runner labels, default
 #                      ["self-hosted","Windows","X64"]
 #   UE_MAC_VERSIONS    JSON array; Mac builds are skipped while unset
@@ -136,12 +137,12 @@ jobs:
 
   win64:
     name: Win64 / UE ${{ matrix.ue }}
-    if: vars.UE_WIN64_VERSIONS != '[]'
+    if: vars.UE_WIN64_VERSIONS != ''
     runs-on: ${{ fromJSON(vars.UE_WIN64_RUNNER || '["self-hosted","Windows","X64"]') }}
     strategy:
       fail-fast: false
       matrix:
-        ue: ${{ fromJSON(vars.UE_WIN64_VERSIONS || '["5.6"]') }}
+        ue: ${{ fromJSON(vars.UE_WIN64_VERSIONS || '[]') }}
     steps:
       - uses: actions/checkout@v4
 
