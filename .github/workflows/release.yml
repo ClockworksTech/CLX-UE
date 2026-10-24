@@ -14,11 +14,15 @@ name: Release CLX Unreal Plugin
 # and GHCR_TOKEN (its classic token with read:packages). Epic only publishes
 # Linux images, and Unreal can't build Win64 or Mac binaries from Linux, so
 # those builds need a self-hosted runner with the engines installed from the
-# Epic Games Launcher; they're opt-in. Repo variables (Settings → Secrets and
-# variables → Actions → Variables) pick the versions without editing this
-# file; see "Releasing" in README.md.
+# Epic Games Launcher: building against the stock Launcher engine is what lets
+# a Blueprint-only project load the plugin without compiling it. Win64 is on
+# by default; Mac is opt-in. Repo variables (Settings → Secrets and variables
+# → Actions → Variables) pick the versions without editing this file; see
+# "Releasing" in README.md. A JSON array of [] turns a platform off.
 #   UE_LINUX_VERSIONS  JSON array of image versions, default ["5.6","5.7","5.8"]
-#   UE_WIN64_VERSIONS  JSON array; Win64 builds are skipped while unset
+#   UE_WIN64_VERSIONS  JSON array, default ["5.6"]
+#   UE_WIN64_RUNNER    JSON array of runner labels, default
+#                      ["self-hosted","Windows","X64"]
 #   UE_MAC_VERSIONS    JSON array; Mac builds are skipped while unset
 #   UE_INSTALL_DIR     Windows engines' parent folder, only needed when the
 #                      Launcher's install list doesn't name them
@@ -73,6 +77,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check registry secrets
+        env:
+          GHCR_USER: ${{ secrets.GHCR_USER }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: |
+          if [ -z "$GHCR_USER" ] || [ -z "$GHCR_TOKEN" ]; then
+            echo "::error::Set the GHCR_USER and GHCR_TOKEN secrets (README → Container access), or set UE_LINUX_VERSIONS to [] to skip Linux builds."
+            exit 1
+          fi
+
       # The dev-slim images are tens of GB unpacked; the stock runner has
       # roughly 20 GB free. Drop preinstalled SDKs this job never uses.
       - name: Free disk space
@@ -122,12 +136,12 @@ jobs:
 
   win64:
     name: Win64 / UE ${{ matrix.ue }}
-    if: vars.UE_WIN64_VERSIONS != ''
-    runs-on: [self-hosted, Windows, X64]
+    if: vars.UE_WIN64_VERSIONS != '[]'
+    runs-on: ${{ fromJSON(vars.UE_WIN64_RUNNER || '["self-hosted","Windows","X64"]') }}
     strategy:
       fail-fast: false
       matrix:
-        ue: ${{ fromJSON(vars.UE_WIN64_VERSIONS || '[]') }}
+        ue: ${{ fromJSON(vars.UE_WIN64_VERSIONS || '["5.6"]') }}
     steps:
       - uses: actions/checkout@v4
 

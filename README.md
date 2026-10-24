@@ -77,8 +77,12 @@ the zips are then in the run's **Release** artifact.
   (`ghcr.io/epicgames/unreal-engine:dev-slim-5.x`). They're on by default.
 - **Win64** and **Mac** can't use the containers. Epic only publishes Linux
   images, and Unreal can't build Windows or Mac binaries from Linux. These builds
-  run on the org's self-hosted runners, `[self-hosted, Windows, X64]` and
-  `[self-hosted, macOS]`, and stay off until their variable is set.
+  run on a self-hosted runner with the stock Launcher engine installed. That's
+  also what makes them load in a Blueprint-only project without compiling.
+  - **Win64** is on by default (UE 5.6). It runs on `[self-hosted, Windows,
+    X64]`, or on the labels in `UE_WIN64_RUNNER`.
+  - **Mac** stays off until `UE_MAC_VERSIONS` is set. It runs on
+    `[self-hosted, macOS]`.
 
 ### Container access (once)
 
@@ -92,7 +96,7 @@ Epic Games account.
 3. Add two repo secrets: `GHCR_USER` (the GitHub username) and `GHCR_TOKEN` (the
    token).
 
-### Self-hosted Windows or Mac builds (optional)
+### Self-hosted Windows and Mac runners (once)
 
 1. **Allow this repo on the runner.** In the org's **Settings → Actions → Runner
    groups**, the group holding the runners must include CLX-UE. This repo is
@@ -107,7 +111,9 @@ Epic Games account.
    - **Windows:** Visual Studio 2022 with the **Game development with C++**
      workload, plus the MSVC version each engine's release notes require.
    - **Mac:** the Xcode version each engine's release notes require.
-4. **Turn the builds on** by setting `UE_WIN64_VERSIONS` or `UE_MAC_VERSIONS`.
+4. **Pick the versions.** Set `UE_WIN64_VERSIONS` to the engines installed on the
+   Windows runner (the default is `["5.6"]`), and set `UE_MAC_VERSIONS` to turn Mac
+   on. If a listed engine isn't installed, the job fails and names it.
 
 ### Repo variables
 
@@ -116,7 +122,8 @@ Set these in **Settings → Secrets and variables → Actions → Variables**:
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `UE_LINUX_VERSIONS` | `["5.6","5.7","5.8"]` | Container image versions to build for Linux (JSON array); `[]` turns Linux off. |
-| `UE_WIN64_VERSIONS` | unset (Win64 skipped) | Engine versions prebuilt on the Windows runner (JSON array). |
+| `UE_WIN64_VERSIONS` | `["5.6"]` | Engine versions prebuilt on the Windows runner (JSON array); `[]` turns Win64 off. |
+| `UE_WIN64_RUNNER` | `["self-hosted","Windows","X64"]` | Labels of the runner that has the engines installed (JSON array). |
 | `UE_MAC_VERSIONS` | unset (Mac skipped) | Engine versions prebuilt on the Mac runner (JSON array). |
 | `UE_INSTALL_DIR` | `C:\Program Files\Epic Games` | Windows fallback when the Launcher's list doesn't name an engine. |
 | `UE_INSTALL_DIR_MAC` | `/Users/Shared/Epic Games` | Folder holding the Mac `UE_5.x` folders. |
