@@ -5,11 +5,11 @@
 #include "msgpack11.h"
 
 UCLXSubsystem::UCLXSubsystem()
-    : ListenSocket(nullptr)
-    , ListenIPAddress(TEXT("0.0.0.0"))
-    , UDPReceiver(nullptr)
+    : ListenIPAddress(TEXT("0.0.0.0"))
     , ListenPort(3650)
     , bSourcesFlag(false)
+    , ListenSocket(nullptr)
+    , UDPReceiver(nullptr)
 {
     // ensure 5 slots: 0=Control…4=Event
     SourceSelection.Init(TEXT(""), 5);

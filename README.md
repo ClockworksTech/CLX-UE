@@ -45,12 +45,17 @@ prebuilt build, so macOS will load its unsigned libraries.
 
 1. Install a C++ toolchain:
    - **Windows:** Visual Studio 2022 with the **Game development with C++**
-     workload.
+     workload, which installs the MSVC C++ tools. Visual Studio without that
+     workload can't compile the plugin.
    - **Mac:** the Xcode version your engine's release notes list.
    - **Linux:** nothing extra, since the engine bundles its own clang.
-2. Close the Unreal Editor, then unzip `clx-ue-<version>.zip` (or clone this repo)
-   into `<YourProject>/Plugins/CLX`.
-3. Open the project. When the editor says the CLX module is missing and asks to
+2. Make sure the project is a C++ project. A Blueprint-only project can't compile
+   a source plugin while the editor is running. To convert one, choose
+   **Tools → New C++ Class** in the editor, pick **None** (an empty class) and
+   create it. That gives the project a `Source` folder. Then close the editor.
+3. Unzip `clx-ue-<version>.zip` (or clone this repo) into
+   `<YourProject>/Plugins/CLX`.
+4. Open the project. When the editor says the CLX module is missing and asks to
    rebuild it, click **Yes**.
 
 ## Releasing

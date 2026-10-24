@@ -6,7 +6,8 @@ public class CLX : ModuleRules
 {
 	public CLX(ReadOnlyTargetRules Target) : base(Target)
 	{
-		CppStandard = CppStandardVersion.Cpp17;
+		// No CppStandard override: each engine builds with its own default
+		// (C++20 since 5.3), and 5.6+ engine headers don't compile as C++17.
         PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 		// msgpack11 throws on oversized values. Clang (Mac, Linux) rejects throw
 		// while exceptions are off, which is the engine default.
