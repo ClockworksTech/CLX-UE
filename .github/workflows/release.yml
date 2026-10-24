@@ -1,22 +1,43 @@
 name: Release CLX Unreal Plugin
 
-# Source-only Unreal plugin: no engine build is needed — consumers drop it in
-# their project's Plugins/ folder and the editor compiles it. On a version tag
-# we package the plugin source into a zip and publish it to the
-# clockworks-downloads bucket (both a versioned object and a stable "-latest"
-# object the Clockworks Hub download button points at), and attach it to the
-# GitHub release.
+# On a version tag:
+#   1. zip the plugin source (any engine version; users compile it themselves),
+#   2. prebuild the plugin with RunUAT BuildPlugin for each supported engine
+#      version, so Blueprint-only projects can use it without Visual Studio,
+#   3. publish every zip to the clockworks-downloads bucket (a versioned object
+#      plus a stable "-latest" one) with a JSON index, and attach them to the
+#      GitHub release.
+#
+# GitHub-hosted runners have no Unreal Engine, so the prebuilt jobs run on the
+# org's self-hosted Windows box (and, opt-in, the Mac mini) with the engines
+# installed from the Epic Games Launcher. Repo variables (Settings → Secrets
+# and variables → Actions → Variables) pick the versions without editing this
+# file; see "Releasing" in README.md for the runner setup.
+#   UE_WIN64_VERSIONS  JSON array, default ["5.6","5.7","5.8"]
+#   UE_MAC_VERSIONS    JSON array; Mac builds are skipped while unset
+#   UE_INSTALL_DIR     Windows engines' parent folder, only needed when the
+#                      Launcher's install list doesn't name them
+#   UE_INSTALL_DIR_MAC Mac engines' parent folder (default /Users/Shared/Epic Games)
+#
+# A manual run (workflow_dispatch) builds everything and keeps the zips as run
+# artifacts; it only publishes when "publish" is ticked.
 
 'on':
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Upload to B2 and overwrite the -latest downloads
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
 jobs:
-  package:
+  source:
+    name: Source zip
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,32 +48,183 @@ jobs:
           # Lay the plugin out under CLX/ so the zip extracts straight into a
           # project's Plugins/ directory. Ship source only — no build outputs.
           mkdir -p pkg/CLX
-          cp -R CLX.uplugin Source Resources Content pkg/CLX/ 2>/dev/null || true
-          # Drop any local build artifacts that may have been committed.
+          cp -R CLX.uplugin Source Resources Content pkg/CLX/
           rm -rf pkg/CLX/Binaries pkg/CLX/Intermediate
-          ( cd pkg && zip -r ../clx-ue.zip CLX )
-          ls -l clx-ue.zip
 
-      - name: Upload versioned build to B2
-        uses: yamatt/backblaze-b2-upload-action@v7
+      - uses: actions/upload-artifact@v4
         with:
-          key_id: ${{ secrets.B2_KEY_ID }}
-          application_key: ${{ secrets.B2_APPLICATION_KEY }}
-          bucket_name: ${{ secrets.B2_BUCKET_NAME }}
-          file_path: clx-ue.zip
-          remote_path: plugins/clx-ue-${{ github.ref_name }}.zip
+          name: Source
+          path: pkg
+          retention-days: 7
 
-      - name: Upload latest build to B2
-        uses: yamatt/backblaze-b2-upload-action@v7
+  win64:
+    name: Win64 / UE ${{ matrix.ue }}
+    runs-on: [self-hosted, Windows, X64]
+    strategy:
+      fail-fast: false
+      matrix:
+        ue: ${{ fromJSON(vars.UE_WIN64_VERSIONS || '["5.6","5.7","5.8"]') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find Unreal Engine ${{ matrix.ue }}
+        shell: pwsh
+        env:
+          UE_VERSION: ${{ matrix.ue }}
+          UE_INSTALL_DIR: ${{ vars.UE_INSTALL_DIR }}
+        run: |
+          # The Launcher records every engine it installed, on any drive, in a
+          # machine-wide list the runner's service account can read.
+          $root = $null
+          $dat = Join-Path $env:ProgramData 'Epic\UnrealEngineLauncher\LauncherInstalled.dat'
+          if (Test-Path $dat) {
+            $root = (Get-Content $dat -Raw | ConvertFrom-Json).InstallationList |
+              Where-Object { $_.AppName -eq "UE_$env:UE_VERSION" } |
+              Select-Object -First 1 -ExpandProperty InstallLocation
+          }
+          if (-not $root) {
+            $parent = if ($env:UE_INSTALL_DIR) { $env:UE_INSTALL_DIR } else { 'C:\Program Files\Epic Games' }
+            $root = Join-Path $parent "UE_$env:UE_VERSION"
+          }
+          $uat = Join-Path $root 'Engine\Build\BatchFiles\RunUAT.bat'
+          if (-not (Test-Path $uat)) {
+            Write-Output "::error::Unreal Engine $env:UE_VERSION is not installed on $env:COMPUTERNAME (no $uat). Install it from the Epic Games Launcher, or drop it from UE_WIN64_VERSIONS."
+            exit 1
+          }
+          Write-Output "Using $root"
+          "UAT=$uat" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: BuildPlugin
+        shell: pwsh
+        env:
+          UE_VERSION: ${{ matrix.ue }}
+        run: |
+          # Old Binaries/Intermediate committed to the repo were built for 5.3;
+          # keep them out of the build.
+          Remove-Item -Recurse -Force Binaries, Intermediate -ErrorAction SilentlyContinue
+          $out = Join-Path $env:RUNNER_TEMP "clx-ue\UE$env:UE_VERSION-Win64"
+          Remove-Item -Recurse -Force $out -ErrorAction SilentlyContinue
+          # BuildPlugin builds the editor module plus Development/Shipping game
+          # targets, and stamps this engine version into the packaged .uplugin.
+          & $env:UAT BuildPlugin "-Plugin=$env:GITHUB_WORKSPACE\CLX.uplugin" "-Package=$out\CLX" -TargetPlatforms=Win64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # A failed or interrupted run can leave its scratch project behind.
+          Remove-Item -Recurse -Force "$out\CLX\HostProject" -ErrorAction SilentlyContinue
+          "OUT=$out" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - uses: actions/upload-artifact@v4
         with:
-          key_id: ${{ secrets.B2_KEY_ID }}
-          application_key: ${{ secrets.B2_APPLICATION_KEY }}
-          bucket_name: ${{ secrets.B2_BUCKET_NAME }}
-          file_path: clx-ue.zip
-          remote_path: plugins/clx-ue-latest.zip
+          name: UE${{ matrix.ue }}-Win64
+          path: ${{ env.OUT }}
+          retention-days: 7
+
+  mac:
+    name: Mac / UE ${{ matrix.ue }}
+    if: vars.UE_MAC_VERSIONS != ''
+    runs-on: [self-hosted, macOS]
+    strategy:
+      fail-fast: false
+      matrix:
+        ue: ${{ fromJSON(vars.UE_MAC_VERSIONS || '[]') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: BuildPlugin
+        env:
+          UE_VERSION: ${{ matrix.ue }}
+          UE_INSTALL_DIR: ${{ vars.UE_INSTALL_DIR_MAC || '/Users/Shared/Epic Games' }}
+        run: |
+          set -eu
+          uat="$UE_INSTALL_DIR/UE_$UE_VERSION/Engine/Build/BatchFiles/RunUAT.sh"
+          if [ ! -x "$uat" ]; then
+            echo "::error::Unreal Engine $UE_VERSION is not installed on this runner (no $uat). Install it from the Epic Games Launcher, or drop it from UE_MAC_VERSIONS."
+            exit 1
+          fi
+          rm -rf Binaries Intermediate
+          out="$RUNNER_TEMP/clx-ue/UE$UE_VERSION-Mac"
+          rm -rf "$out"
+          "$uat" BuildPlugin "-Plugin=$GITHUB_WORKSPACE/CLX.uplugin" "-Package=$out/CLX" -TargetPlatforms=Mac
+          rm -rf "$out/CLX/HostProject"
+          echo "OUT=$out" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UE${{ matrix.ue }}-Mac
+          path: ${{ env.OUT }}
+          retention-days: 7
+
+  publish:
+    name: Publish
+    needs: [source, win64, mac]
+    # mac is skipped while UE_MAC_VERSIONS is unset; anything else that didn't
+    # succeed holds the whole release back, so -latest never mixes versions.
+    if: >-
+      !cancelled() &&
+      needs.source.result == 'success' &&
+      needs.win64.result == 'success' &&
+      (needs.mac.result == 'success' || needs.mac.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: builds
+
+      - name: Zip packages
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -eux
+          # A tag like v1.2, or the branch name on a manual run.
+          TAG=${REF_NAME//\//-}
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          mkdir dist
+          # Artifacts land in builds/<name>/CLX; zip each with CLX/ at the top
+          # so it extracts straight into a project's Plugins/ directory.
+          ( cd builds/Source && zip -qr "../../dist/clx-ue-$TAG.zip" CLX )
+          builds_json='[]'
+          for dir in builds/UE*-*; do
+            name=$(basename "$dir")          # e.g. UE5.6-Win64
+            engine=${name%-*}; engine=${engine#UE}
+            platform=${name##*-}
+            file="clx-ue-$TAG-$name.zip"
+            ( cd "$dir" && zip -qr "../../dist/$file" CLX )
+            builds_json=$(jq -c --arg e "$engine" --arg p "$platform" --arg f "$file" \
+              '. + [{engine: $e, platform: $p, file: $f}]' <<<"$builds_json")
+          done
+          # Index for the Hub: file names are relative to plugins/.
+          jq -n --arg v "$TAG" --arg s "clx-ue-$TAG.zip" --argjson b "$builds_json" \
+            '{version: $v, source: $s, builds: ($b | sort_by(.platform, (.engine | split(".") | map(tonumber))))}' \
+            > "dist/clx-ue-$TAG.json"
+          cat "dist/clx-ue-$TAG.json"
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Release
+          path: dist
+          retention-days: 7
+
+      - name: Upload to B2
+        if: github.event_name == 'push' || inputs.publish
+        env:
+          B2_APPLICATION_KEY_ID: ${{ secrets.B2_KEY_ID }}
+          B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY }}
+          B2_BUCKET_NAME: ${{ secrets.B2_BUCKET_NAME }}
+        run: |
+          set -eu
+          pipx install b2==4.8.0
+          # Versioned objects first, then the -latest copies, so a -latest
+          # link never points at a release that's only half uploaded.
+          for f in dist/*; do
+            b2 file upload --no-progress "$B2_BUCKET_NAME" "$f" "plugins/$(basename "$f")"
+          done
+          for f in dist/*; do
+            latest=$(basename "$f" | sed "s/^clx-ue-$TAG/clx-ue-latest/")
+            b2 file upload --no-progress "$B2_BUCKET_NAME" "$f" "plugins/$latest"
+          done
 
       - name: Attach to GitHub release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: clx-ue.zip
+          files: dist/*
