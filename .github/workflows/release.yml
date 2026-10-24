@@ -3,17 +3,22 @@ name: Release CLX Unreal Plugin
 # On a version tag:
 #   1. zip the plugin source (any engine version; users compile it themselves),
 #   2. prebuild the plugin with RunUAT BuildPlugin for each supported engine
-#      version, so Blueprint-only projects can use it without Visual Studio,
+#      version, so projects can use it without a C++ toolchain,
 #   3. publish every zip to the clockworks-downloads bucket (a versioned object
 #      plus a stable "-latest" one) with a JSON index, and attach them to the
 #      GitHub release.
 #
-# GitHub-hosted runners have no Unreal Engine, so the prebuilt jobs run on the
-# org's self-hosted Windows box (and, opt-in, the Mac mini) with the engines
-# installed from the Epic Games Launcher. Repo variables (Settings → Secrets
-# and variables → Actions → Variables) pick the versions without editing this
-# file; see "Releasing" in README.md for the runner setup.
-#   UE_WIN64_VERSIONS  JSON array, default ["5.6","5.7","5.8"]
+# Linux builds run on GitHub-hosted runners inside Epic's Unreal Engine
+# container images (ghcr.io/epicgames/unreal-engine). Pulling those needs a
+# GitHub account linked to an Epic account: secrets GHCR_USER (that account)
+# and GHCR_TOKEN (its classic token with read:packages). Epic only publishes
+# Linux images, and Unreal can't build Win64 or Mac binaries from Linux, so
+# those builds need a self-hosted runner with the engines installed from the
+# Epic Games Launcher; they're opt-in. Repo variables (Settings → Secrets and
+# variables → Actions → Variables) pick the versions without editing this
+# file; see "Releasing" in README.md.
+#   UE_LINUX_VERSIONS  JSON array of image versions, default ["5.6","5.7","5.8"]
+#   UE_WIN64_VERSIONS  JSON array; Win64 builds are skipped while unset
 #   UE_MAC_VERSIONS    JSON array; Mac builds are skipped while unset
 #   UE_INSTALL_DIR     Windows engines' parent folder, only needed when the
 #                      Launcher's install list doesn't name them
@@ -57,13 +62,72 @@ jobs:
           path: pkg
           retention-days: 7
 
+  linux:
+    name: Linux / UE ${{ matrix.ue }}
+    if: vars.UE_LINUX_VERSIONS != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ue: ${{ fromJSON(vars.UE_LINUX_VERSIONS || '["5.6","5.7","5.8"]') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The dev-slim images are tens of GB unpacked; the stock runner has
+      # roughly 20 GB free. Drop preinstalled SDKs this job never uses.
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/share/swift /usr/local/share/powershell
+          docker image prune -af
+          df -h /
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ secrets.GHCR_USER }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: BuildPlugin
+        env:
+          IMAGE: ghcr.io/epicgames/unreal-engine:dev-slim-${{ matrix.ue }}
+          UE_VERSION: ${{ matrix.ue }}
+        run: |
+          set -eux
+          docker pull --quiet "$IMAGE"
+          df -h /
+          # The image runs as ue4 (uid 1000), not the runner's user, so the
+          # checkout goes in read-only and the build writes to an open folder.
+          out="$RUNNER_TEMP/clx-ue/UE$UE_VERSION-Linux"
+          mkdir -p "$out" && chmod 777 "$out"
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/src:ro" -v "$out:/out" \
+            --entrypoint /bin/bash "$IMAGE" -euxc '
+              # Old Binaries/Intermediate committed to the repo were built for
+              # Win64 5.3; keep them out of the build.
+              mkdir /tmp/CLX
+              cp -R /src/CLX.uplugin /src/Source /src/Resources /src/Content /tmp/CLX/
+              /home/ue4/UnrealEngine/Engine/Build/BatchFiles/RunUAT.sh BuildPlugin \
+                -Plugin=/tmp/CLX/CLX.uplugin -Package=/tmp/pkg/CLX -TargetPlatforms=Linux
+              rm -rf /tmp/pkg/CLX/HostProject
+              cp -R /tmp/pkg/CLX /out/'
+          echo "OUT=$out" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UE${{ matrix.ue }}-Linux
+          path: ${{ env.OUT }}
+          retention-days: 7
+
   win64:
     name: Win64 / UE ${{ matrix.ue }}
+    if: vars.UE_WIN64_VERSIONS != ''
     runs-on: [self-hosted, Windows, X64]
     strategy:
       fail-fast: false
       matrix:
-        ue: ${{ fromJSON(vars.UE_WIN64_VERSIONS || '["5.6","5.7","5.8"]') }}
+        ue: ${{ fromJSON(vars.UE_WIN64_VERSIONS || '[]') }}
     steps:
       - uses: actions/checkout@v4
 
@@ -155,13 +219,15 @@ jobs:
 
   publish:
     name: Publish
-    needs: [source, win64, mac]
-    # mac is skipped while UE_MAC_VERSIONS is unset; anything else that didn't
-    # succeed holds the whole release back, so -latest never mixes versions.
+    needs: [source, linux, win64, mac]
+    # Build jobs are skipped when their variable turns them off; any that ran
+    # and didn't succeed holds the whole release back, so -latest never mixes
+    # versions.
     if: >-
       !cancelled() &&
       needs.source.result == 'success' &&
-      needs.win64.result == 'success' &&
+      (needs.linux.result == 'success' || needs.linux.result == 'skipped') &&
+      (needs.win64.result == 'success' || needs.win64.result == 'skipped') &&
       (needs.mac.result == 'success' || needs.mac.result == 'skipped')
     runs-on: ubuntu-latest
     steps:

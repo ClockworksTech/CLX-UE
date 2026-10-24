@@ -14,29 +14,32 @@ kinds:
 
 | Download | Use it when |
 | --- | --- |
-| `clx-ue-<version>-UE5.x-Win64.zip` | Your engine version has a prebuilt zip. No Visual Studio needed. |
+| `clx-ue-<version>-UE5.x-<platform>.zip` (prebuilt) | A release has one for your engine version and platform. No C++ toolchain needed. |
 | `clx-ue-<version>.zip` (source) | Any other engine version or platform. Unreal compiles it the first time, so you need a C++ toolchain. |
 
-Prebuilt zips are made for Unreal Engine 5.6, 5.7 and 5.8 on Windows. A plugin
-binary only loads in the engine version it was built for, so match the `UE5.x` in
-the file name to your editor (**Help → About Unreal Editor**).
+Each release lists the prebuilt zips it includes. A plugin binary only loads in
+the engine version it was built for, so match the `UE5.x` in the file name to
+your editor (**Help → About Unreal Editor**).
 
-### Prebuilt (Windows)
+### Prebuilt
 
 1. Close the Unreal Editor.
-2. Unzip `clx-ue-<version>-UE5.x-Win64.zip` into your project's `Plugins` folder
-   (create it next to the `.uproject` if it isn't there). You should end up with
+2. Unzip the prebuilt zip into your project's `Plugins` folder (create it next to
+   the `.uproject` if it isn't there). You should end up with
    `<YourProject>/Plugins/CLX/CLX.uplugin`.
 3. Open the project. If CLX isn't enabled yet, enable it in **Edit → Plugins**
    (search "CLX") and restart the editor.
 
 If the editor says the CLX module is missing or was built with a different engine
 version and asks to rebuild it, the zip doesn't match your engine. Rebuilding then
-needs Visual Studio, so download the zip for your engine version instead.
+needs a C++ toolchain, so download the zip for your engine version instead.
 
 Packaging a standalone game from a Blueprint-only project that uses any code
 plugin, this one included, makes Unreal build a game executable. That step still
-needs Visual Studio. The prebuilt zip covers the editor and Play In Editor.
+needs the C++ toolchain. The prebuilt zip covers the editor and Play In Editor.
+
+On a Mac, run `xattr -dr com.apple.quarantine Plugins/CLX` after unzipping a
+prebuilt build, so macOS will load its unsigned libraries.
 
 ### Source (any engine version or platform)
 
@@ -44,6 +47,7 @@ needs Visual Studio. The prebuilt zip covers the editor and Play In Editor.
    - **Windows:** Visual Studio 2022 with the **Game development with C++**
      workload.
    - **Mac:** the Xcode version your engine's release notes list.
+   - **Linux:** nothing extra, since the engine bundles its own clang.
 2. Close the Unreal Editor, then unzip `clx-ue-<version>.zip` (or clone this repo)
    into `<YourProject>/Plugins/CLX`.
 3. Open the project. When the editor says the CLX module is missing and asks to
@@ -61,37 +65,49 @@ attaches them to the GitHub release:
 - `clx-ue-<tag>.json`, an index of the above for the Hub.
 - A `clx-ue-latest…` copy of each file.
 
-The prebuilt jobs need Unreal Engine, which GitHub-hosted runners don't have, so
-they run on the org's self-hosted runners:
+If any build fails, nothing is published, so the `-latest` files never mix
+versions. Use **Re-run failed jobs** once it's fixed. Running a manual **Run
+workflow** with "publish" unticked builds everything without uploading anything;
+the zips are then in the run's **Release** artifact.
 
-- **Windows:** the `[self-hosted, Windows, X64]` runner that builds Clockworks
-  Viewer and Bridge.
-- **Mac (optional):** the `[self-hosted, macOS]` runner.
+### Where each platform builds
 
-Running a manual **Run workflow** with "publish" unticked builds everything
-without uploading anything. Use it to check a runner, then download the zips
-from the run's **Release** artifact.
+- **Linux** builds run on GitHub-hosted runners inside Epic's
+  [Unreal Engine container images](https://dev.epicgames.com/documentation/unreal-engine/overview-of-containers-in-unreal-engine)
+  (`ghcr.io/epicgames/unreal-engine:dev-slim-5.x`). They're on by default.
+- **Win64** and **Mac** can't use the containers. Epic only publishes Linux
+  images, and Unreal can't build Windows or Mac binaries from Linux. These builds
+  run on the org's self-hosted runners, `[self-hosted, Windows, X64]` and
+  `[self-hosted, macOS]`, and stay off until their variable is set.
 
-### Runner setup (once)
+### Container access (once)
+
+Epic's images are private packages, visible only to GitHub accounts linked to an
+Epic Games account.
+
+1. Link a GitHub account in your Epic account's **Apps and Accounts**
+   settings, then accept the invitation to the EpicGames GitHub org.
+2. On that GitHub account, create a classic personal access token with only the
+   `read:packages` scope.
+3. Add two repo secrets: `GHCR_USER` (the GitHub username) and `GHCR_TOKEN` (the
+   token).
+
+### Self-hosted Windows or Mac builds (optional)
 
 1. **Allow this repo on the runner.** In the org's **Settings → Actions → Runner
    groups**, the group holding the runners must include CLX-UE. This repo is
    public, so the group also needs **Allow public repositories**. That's safe
    here because the workflow runs only on tags and manual runs, never on pull
    requests.
-2. **Install the engines.** On the Windows runner, use the Epic Games Launcher to
-   install each version listed in `UE_WIN64_VERSIONS` (default 5.6, 5.7 and
-   5.8). In each engine's **Options**, you can untick the other target platforms
-   and the Starter Content to save disk space. The workflow finds engines through
-   the Launcher's own install list, so any drive works.
-3. **Install the toolchain.** Visual Studio 2022 with the **Game development with
-   C++** workload, plus the MSVC version each engine's release notes require. The
-   Viewer build already uses this machine's VS 2022, so this is usually just a
-   matter of adding components.
-4. **Optional Mac builds.** Install the engines and the matching Xcode on the Mac
-   mini, then set `UE_MAC_VERSIONS`. Mac users unzipping a prebuilt build may
-   need to run `xattr -dr com.apple.quarantine Plugins/CLX` so macOS will load the
-   unsigned libraries.
+2. **Install the engines** with the Epic Games Launcher. In each engine's
+   **Options**, you can untick the other target platforms and the Starter Content
+   to save disk space. On Windows, the workflow finds engines through the
+   Launcher's own install list, so any drive works.
+3. **Install the toolchain.**
+   - **Windows:** Visual Studio 2022 with the **Game development with C++**
+     workload, plus the MSVC version each engine's release notes require.
+   - **Mac:** the Xcode version each engine's release notes require.
+4. **Turn the builds on** by setting `UE_WIN64_VERSIONS` or `UE_MAC_VERSIONS`.
 
 ### Repo variables
 
@@ -99,11 +115,11 @@ Set these in **Settings → Secrets and variables → Actions → Variables**:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `UE_WIN64_VERSIONS` | `["5.6","5.7","5.8"]` | Engine versions prebuilt for Windows (JSON array). |
-| `UE_MAC_VERSIONS` | unset (Mac skipped) | Engine versions prebuilt for Mac (JSON array). |
+| `UE_LINUX_VERSIONS` | `["5.6","5.7","5.8"]` | Container image versions to build for Linux (JSON array); `[]` turns Linux off. |
+| `UE_WIN64_VERSIONS` | unset (Win64 skipped) | Engine versions prebuilt on the Windows runner (JSON array). |
+| `UE_MAC_VERSIONS` | unset (Mac skipped) | Engine versions prebuilt on the Mac runner (JSON array). |
 | `UE_INSTALL_DIR` | `C:\Program Files\Epic Games` | Windows fallback when the Launcher's list doesn't name an engine. |
 | `UE_INSTALL_DIR_MAC` | `/Users/Shared/Epic Games` | Folder holding the Mac `UE_5.x` folders. |
 
 The B2 upload uses the existing `B2_KEY_ID`, `B2_APPLICATION_KEY` and
-`B2_BUCKET_NAME` secrets. If any build fails, nothing is published, so the
-`-latest` files never mix versions. Use **Re-run failed jobs** once it's fixed.
+`B2_BUCKET_NAME` secrets.

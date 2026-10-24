@@ -8,6 +8,9 @@ public class CLX : ModuleRules
 	{
 		CppStandard = CppStandardVersion.Cpp17;
         PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
+		// msgpack11 throws on oversized values. Clang (Mac, Linux) rejects throw
+		// while exceptions are off, which is the engine default.
+		bEnableExceptions = true;
 		
 		PublicIncludePaths.AddRange(
 			new string[] {
