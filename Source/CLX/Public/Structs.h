@@ -44,7 +44,7 @@ struct FDeckPacket
 
     FDeckPacket()
         : Pitch(0), Position(0), Position2(0),
-        NormalizedPosition(0), BPM(0), Length(0),
+        NormalizedPosition(0), BPM(0), Beat(0), Length(0),
         EQLow(0), EQMid(0), EQHigh(0), DeckIndex(0)
     {
     }
