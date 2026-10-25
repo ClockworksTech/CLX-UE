@@ -65,10 +65,11 @@ uploads these files to the `clockworks-downloads` bucket under `plugins/`, and
 attaches them to the GitHub release:
 
 - `clx-ue-<tag>.zip`, the source.
-- `clx-ue-<tag>-UE<engine>-<platform>.zip`, one prebuilt zip per engine version and
-  platform.
+- `clx-ue-<tag>-UE<engine>-Linux.zip`, one prebuilt zip per engine version.
 - `clx-ue-<tag>.json`, an index of the above for the Hub.
 - A `clx-ue-latest…` copy of each file.
+
+The Win64 zips are built by hand for now; see [Win64 by hand](#win64-by-hand).
 
 If any build fails, nothing is published, so the `-latest` files never mix
 versions. Use **Re-run failed jobs** once it's fixed. Running a manual **Run
@@ -81,9 +82,36 @@ the zips are then in the run's **Release** artifact.
   [Unreal Engine container images](https://dev.epicgames.com/documentation/unreal-engine/overview-of-containers-in-unreal-engine)
   (`ghcr.io/epicgames/unreal-engine:dev-slim-5.x`). They're on by default.
 - **Win64** and **Mac** can't use the containers. Epic only publishes Linux
-  images, and Unreal can't build Windows or Mac binaries from Linux. These builds
-  run on the org's self-hosted runners, `[self-hosted, Windows, X64]` and
-  `[self-hosted, macOS]`, and stay off until their variable is set.
+  images, and Unreal can't build Windows or Mac binaries from Linux. They need
+  the stock Launcher engine, which is also what makes them load in a
+  Blueprint-only project without compiling.
+  - **Win64** is built by hand with `scripts/build-win64.ps1` (below). The CI job
+    stays off until `UE_WIN64_VERSIONS` is set; it then runs on
+    `[self-hosted, Windows, X64]`, or on the labels in `UE_WIN64_RUNNER`.
+  - **Mac** stays off until `UE_MAC_VERSIONS` is set. It runs on
+    `[self-hosted, macOS]`.
+
+### Win64 by hand
+
+On a Windows PC with the engine from the Epic Games Launcher and Visual Studio
+2022 with the **Game development with C++** workload, after the tag's CI run has
+published:
+
+1. Check out the tag, then run (one `-Engine` value per engine, comma-separated):
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\build-win64.ps1 -Tag v1.1 -Engine 5.6
+   ```
+
+2. It writes `clx-ue-<tag>-UE5.6-Win64.zip` and an identical
+   `clx-ue-latest-UE5.6-Win64.zip` to `dist\`. Upload both to `plugins/` in the
+   `clockworks-downloads` bucket, the versioned one first: through the B2 web
+   console, or add `-Upload` to have the script do it with the
+   [b2 command-line tool](https://www.backblaze.com/docs/cloud-storage-command-line-tools)
+   (it reads `B2_APPLICATION_KEY_ID`, `B2_APPLICATION_KEY` and `B2_BUCKET_NAME`).
+3. Attach the versioned zip to the GitHub release.
+
+The `clx-ue-<tag>.json` index only lists CI builds, so it won't name these.
 
 ### Container access (once)
 
@@ -97,7 +125,7 @@ Epic Games account.
 3. Add two repo secrets: `GHCR_USER` (the GitHub username) and `GHCR_TOKEN` (the
    token).
 
-### Self-hosted Windows or Mac builds (optional)
+### Self-hosted Windows and Mac runners (once, optional)
 
 1. **Allow this repo on the runner.** In the org's **Settings → Actions → Runner
    groups**, the group holding the runners must include CLX-UE. This repo is
@@ -112,7 +140,9 @@ Epic Games account.
    - **Windows:** Visual Studio 2022 with the **Game development with C++**
      workload, plus the MSVC version each engine's release notes require.
    - **Mac:** the Xcode version each engine's release notes require.
-4. **Turn the builds on** by setting `UE_WIN64_VERSIONS` or `UE_MAC_VERSIONS`.
+4. **Pick the versions.** Set `UE_WIN64_VERSIONS` and `UE_MAC_VERSIONS` to the
+   engines installed on each runner, which turns those builds on. If a listed
+   engine isn't installed, the job fails and names it.
 
 ### Repo variables
 
@@ -122,6 +152,7 @@ Set these in **Settings → Secrets and variables → Actions → Variables**:
 | --- | --- | --- |
 | `UE_LINUX_VERSIONS` | `["5.6","5.7","5.8"]` | Container image versions to build for Linux (JSON array); `[]` turns Linux off. |
 | `UE_WIN64_VERSIONS` | unset (Win64 skipped) | Engine versions prebuilt on the Windows runner (JSON array). |
+| `UE_WIN64_RUNNER` | `["self-hosted","Windows","X64"]` | Labels of the runner that has the engines installed (JSON array). |
 | `UE_MAC_VERSIONS` | unset (Mac skipped) | Engine versions prebuilt on the Mac runner (JSON array). |
 | `UE_INSTALL_DIR` | `C:\Program Files\Epic Games` | Windows fallback when the Launcher's list doesn't name an engine. |
 | `UE_INSTALL_DIR_MAC` | `/Users/Shared/Epic Games` | Folder holding the Mac `UE_5.x` folders. |
